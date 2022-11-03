@@ -43,12 +43,16 @@ import java.util.LinkedHashSet;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.PropertyPermission;
 import java.util.Set;
+import java.util.StringJoiner;
 
 import static java.lang.invoke.MethodHandleStatics.CLASSFILE_VERSION;
 import static java.lang.invoke.MethodHandles.Lookup.ClassOption.NESTMATE;
 import static java.lang.invoke.MethodHandles.Lookup.ClassOption.STRONG;
 import static java.lang.invoke.MethodType.methodType;
 import static jdk.internal.org.objectweb.asm.Opcodes.*;
+
+import java.nio.charset.StandardCharsets;
+import java.util.zip.CRC32;
 
 /**
  * Lambda metafactory implementation which dynamically creates an
@@ -93,6 +97,10 @@ import static jdk.internal.org.objectweb.asm.Opcodes.*;
 
     private static final boolean disableEagerInitialization;
 
+    private static final boolean generateStableLambdaNames;
+    private static final int mask1 = 0xAA; // 0000000010101010
+    private static final int mask2 = 0x55; // 0000000001010101
+
     // condy to load implMethod from class data
     private static final ConstantDynamic implMethodCondy;
 
@@ -103,6 +111,9 @@ import static jdk.internal.org.objectweb.asm.Opcodes.*;
 
         final String disableEagerInitializationKey = "jdk.internal.lambda.disableEagerInitialization";
         disableEagerInitialization = GetBooleanAction.privilegedGetProperty(disableEagerInitializationKey);
+
+        final String generateStableLambdaNamesKey = "jdk.internal.lambda.generateStableLambdaNames";
+        generateStableLambdaNames = GetBooleanAction.privilegedGetProperty(generateStableLambdaNamesKey);
 
         // condy to load implMethod from class data
         MethodType classDataMType = methodType(Object.class, MethodHandles.Lookup.class, String.class, Class.class);
@@ -179,7 +190,7 @@ import static jdk.internal.org.objectweb.asm.Opcodes.*;
         implMethodName = implInfo.getName();
         implMethodDesc = implInfo.getMethodType().toMethodDescriptorString();
         constructorType = factoryType.changeReturnType(Void.TYPE);
-        lambdaClassName = lambdaClassName(targetClass);
+        lambdaClassName = generateStableLambdaNames ? stableLambdaClassName(targetClass) : lambdaClassName(targetClass);
         // If the target class invokes a protected method inherited from a
         // superclass in a different package, or does 'invokespecial', the
         // lambda class has no access to the resolved method. Instead, we need
@@ -204,12 +215,69 @@ import static jdk.internal.org.objectweb.asm.Opcodes.*;
     }
 
     private static String lambdaClassName(Class<?> targetClass) {
+        return createNameFromTargetClass(targetClass) + counter.incrementAndGet();
+    }
+
+    private static String createNameFromTargetClass(Class<?> targetClass) {
         String name = targetClass.getName();
         if (targetClass.isHidden()) {
             // use the original class name
             name = name.replace('/', '_');
         }
-        return name.replace('.', '/') + "$$Lambda$" + counter.incrementAndGet();
+        return name.replace('.', '/') + "$$Lambda$";
+    }
+
+    /**
+     * Creating stable name for lambda class.
+     * Parameters that are used to create stable name
+     * are a superset of the parameters that are used in
+     * {@link java.lang.invoke.LambdaProxyClassArchive#addToArchive}
+     * to store lambdas.
+     *
+     * @return a stable name for the created lambda class.
+     */
+    private String stableLambdaClassName(Class<?> targetClass) {
+        String name = createNameFromTargetClass(targetClass);
+
+        StringBuilder hashData1 = new StringBuilder(), hashData2 = new StringBuilder();
+        appendData(hashData1, hashData2, interfaceMethodName);
+        appendData(hashData1, hashData2, getQualifiedSignature(factoryType));
+        appendData(hashData1, hashData2, getQualifiedSignature(interfaceMethodType));
+        appendData(hashData1, hashData2, implementation.internalMemberName().toString());
+        appendData(hashData1, hashData2, getQualifiedSignature(dynamicMethodType));
+
+        for (Class<?> clazz : altInterfaces) {
+            appendData(hashData1, hashData2, clazz.getName());
+        }
+
+        for (MethodType method : altMethods) {
+            appendData(hashData1, hashData2, getQualifiedSignature(method));
+        }
+
+        return name + stringHashValue(hashData1.toString()) + stringHashValue(hashData2.toString());
+    }
+
+    private void appendData(StringBuilder hashData1, StringBuilder hashData2, String data) {
+        for (int i = 0; i < data.length(); i++) {
+            hashData1.append((char)(data.charAt(i) & mask1));
+            hashData2.append((char)(data.charAt(i) & mask2));
+        }
+    }
+
+    private String stringHashValue(String data) {
+        CRC32 crc32 = new CRC32();
+        crc32.update(data.getBytes(StandardCharsets.UTF_8));
+        return Long.toHexString(crc32.getValue());
+    }
+
+    private String getQualifiedSignature(MethodType type) {
+        StringJoiner sj = new StringJoiner(",", "(",
+                ")" + type.returnType().getName());
+        Class<?>[] ptypes = type.ptypes();
+        for (int i = 0; i < ptypes.length; i++) {
+            sj.add(ptypes[i].getName());
+        }
+        return sj.toString();
     }
 
     /**

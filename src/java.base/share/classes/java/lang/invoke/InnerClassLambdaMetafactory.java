@@ -98,8 +98,8 @@ import java.util.zip.CRC32;
     private static final boolean disableEagerInitialization;
 
     private static final boolean generateStableLambdaNames;
-    private static final int mask1 = 0xAA; // 0000000010101010
-    private static final int mask2 = 0x55; // 0000000001010101
+    private static final short mask1 = 0xAA; // 0000000010101010
+    private static final short mask2 = 0x55; // 0000000001010101
 
     // condy to load implMethod from class data
     private static final ConstantDynamic implMethodCondy;
@@ -228,11 +228,12 @@ import java.util.zip.CRC32;
     }
 
     /**
-     * Creating stable name for lambda class.
-     * Parameters that are used to create stable name
-     * are a superset of the parameters that are used in
+     * Create a stable name for the lambda class.
+     * Parameters used to create a stable name
+     * are a superset of the parameters used in
      * {@link java.lang.invoke.LambdaProxyClassArchive#addToArchive}
-     * to store lambdas.
+     * to store lambdas. Concatenate all the parameters, and hash them
+     * into 64-bit hash value.
      *
      * @return a stable name for the created lambda class.
      */
@@ -266,7 +267,7 @@ import java.util.zip.CRC32;
 
     private String stringHashValue(String data) {
         CRC32 crc32 = new CRC32();
-        crc32.update(data.getBytes(StandardCharsets.UTF_8));
+        crc32.update(data.getBytes(StandardCharsets.UTF_16));
         return Long.toHexString(crc32.getValue());
     }
 

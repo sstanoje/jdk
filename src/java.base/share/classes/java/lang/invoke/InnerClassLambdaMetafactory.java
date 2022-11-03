@@ -229,11 +229,17 @@ import java.util.zip.CRC32;
 
     /**
      * Create a stable name for the lambda class.
-     * Parameters used to create a stable name
-     * are a superset of the parameters used in
-     * {@link java.lang.invoke.LambdaProxyClassArchive#addToArchive}
-     * to store lambdas. Concatenate all the parameters, and hash them
-     * into 64-bit hash value.
+     * When the CDS archiving is enabled, lambda classes
+     * are stored in the archive using some parameters from
+     * the InnerClassLambdaMetafactory. To distinguish between
+     * two lambdas, even when CDS archiving is not enabled,
+     * use a superset of those parameters to create a stable name.
+     *
+     * Concatenate all the parameters chosen for the stable name,
+     * and hash them into 64-bit hash value.
+     * Any additional changes to this method will result in unstable
+     * hash values and unstable names. Thus, this implementation should
+     * not be changed.
      *
      * @return a stable name for the created lambda class.
      */
@@ -255,7 +261,7 @@ import java.util.zip.CRC32;
             appendData(hashData1, hashData2, getQualifiedSignature(method));
         }
 
-        return name + stringHashValue(hashData1.toString()) + stringHashValue(hashData2.toString());
+        return name + hashToHexString(hashData1.toString(), hashData2.toString());
     }
 
     private void appendData(StringBuilder hashData1, StringBuilder hashData2, String data) {
@@ -265,10 +271,16 @@ import java.util.zip.CRC32;
         }
     }
 
-    private String stringHashValue(String data) {
+    private Long hashStringToLong(String hashData) {
         CRC32 crc32 = new CRC32();
-        crc32.update(data.getBytes(StandardCharsets.UTF_16));
-        return Long.toHexString(crc32.getValue());
+        crc32.update(hashData.getBytes(StandardCharsets.UTF_16));
+        return crc32.getValue();
+    }
+
+    private String hashToHexString(String hashData1, String hashData2) {
+        long hashValueData1 = hashStringToLong(hashData1);
+        long hashValueData2 = hashStringToLong(hashData2);
+        return Long.toHexString(hashValueData1 + hashValueData2);
     }
 
     private String getQualifiedSignature(MethodType type) {
